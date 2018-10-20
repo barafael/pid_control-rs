@@ -20,6 +20,10 @@
 
 pub mod util;
 
+pub mod noise_filter;
+use noise_filter::NoiseFilter;
+use noise_filter::MovAvgFilter;
+
 use core::f64;
 
 /// A generic controller interface.
@@ -108,6 +112,8 @@ pub struct PIDController {
 
     pub d_mode: DerivativeMode,
 
+    pub d_filter: Option<MovAvgFilter>,
+
     // The PIDs internal state. All other attributes are configuration values
     err_sum: f64,
     prev_value: f64,
@@ -135,6 +141,8 @@ impl PIDController {
             out_max: f64::INFINITY,
 
             d_mode: DerivativeMode::OnMeasurement,
+
+            d_filter: None,
         }
     }
 
@@ -157,6 +165,11 @@ impl PIDController {
     pub fn set_out_limits(&mut self, min: f64, max: f64) {
         self.out_min = min;
         self.out_max = max;
+    }
+
+    /// Set a filter for filtering the derivative part
+    pub fn set_deriv_filter(&mut self, filter: MovAvgFilter) {
+        self.d_filter = Some(filter);
     }
 }
 
@@ -191,10 +204,16 @@ impl Controller for PIDController {
                 DerivativeMode::OnMeasurement => {
                     // we use -delta_v instead of delta_error to reduce "derivative kick",
                     // see http://brettbeauregard.com/blog/2011/04/improving-the-beginner%E2%80%99s-pid-derivative-kick/
-                    self.d_gain * (self.prev_value - value) / delta_t
+                    self.d_gain * match self.d_filter {
+                        Some(ref mut filter) => filter.next((self.prev_value - value) / delta_t),
+                        None => (self.prev_value - value) / delta_t,
+                    }
                 },
                 DerivativeMode::OnError => {
-                    self.d_gain * (error - self.prev_error) / delta_t
+                    self.d_gain * match self.d_filter {
+                        Some(ref mut filter) => filter.next((error - self.prev_error) / delta_t),
+                        None => ((error - self.prev_error) / delta_t),
+                    }
                 }
             }
         };
